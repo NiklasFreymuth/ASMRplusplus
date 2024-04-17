@@ -1,0 +1,399 @@
+name: "SLURM"   # MUST BE "SLURM"
+
+# Required
+partition: "multiple_il"
+job-name: "stokes"    # this will be the experiments name in slurm
+num_parallel_jobs: 99
+time: 4300  # in minutes
+cpus-per-task: 64
+ntasks: 2
+mem-per-cpu: 1500
+
+sbatch_args: # Dictionary of SBATCH keywords and arguments
+  distribution: cyclic  # To have repetitions of the same exp be distributed to different nodes
+  nodes: 2
+
+slurm_log: "./slurmlog"     # optional. dir in which slurm output and error logs will be saved.
+sh_lines: [ "export WANDB_DIR=$TMPDIR/wandb", "mkdir $WANDB_DIR" ]
+---
+# fluid experiments, including baselines
+
+name: "DEFAULT"   # MUST BE DEFAULT
+import_path: "asmr_default.yaml"
+params:
+  environment:
+    mesh_refinement:
+      element_penalty:
+        min: 0.0005
+        max: 0.05
+      fem:
+        pde_type: stokes_flow
+        domain:
+          domain_type: trapezoid_hole
+          maximum_distortion: 0.45
+      evaluation:
+        # we only use 1 evaluation environment here because computing a new reference mesh for each evaluation step
+        # is relatively costly
+        fem:
+          num_pdes: 1 # [ 1, 0 ]
+          domain:
+            fixed_domain: True # [ True, False ]
+          stokes_flow:
+            fixed_inlet: True # [ True, False ]
+      final:
+        fem:
+          num_pdes: 100
+
+---
+name: stokes_asmr_old
+
+params:
+  environment:
+    environment: mesh_refinement
+    mesh_refinement:
+      element_penalty:
+        sample_penalty: False
+      reward_type: spatial_volume
+      fem:
+        error_metric: mean
+      element_features:
+        element_penalty: False
+  algorithm:
+    discount_factor: 0.99
+    ppo:
+      normalize_mappings: 0
+    network:
+      base:
+        edge_dropout: 0.0
+list1:
+  recording:
+    idx: [ 1001 ]
+list2:
+  environment:
+    mesh_refinement:
+      element_penalty:
+        value: [ 0.3, 0.2, 0.1,
+                 0.075, 0.05, 0.04, 0.03,
+                 0.025, 0.02, 0.015
+        ]
+---
+name: stokes_asmr_general
+list:
+  recording:
+    idx: [ 1000, 1010, 1011, 1012 ]
+  algorithm:
+    name: [ ppo, dqn, ppo, ppo ]
+    mixed_return:
+      global_weight: [ 0.5, 0.5, 0.0, 0.5 ]
+    ppo:
+      normalize_mappings: [ 1, 1, 1, 0 ]
+
+---
+name: stokes_asmr_mapping
+params:
+  algorithms:
+    ppo:
+      projection_type: mean
+list:
+  recording:
+    idx: [ 1013, 1014 ]
+  algorithm:
+    ppo:
+      normalize_mappings: [ 1, 0 ]
+grid:
+  environment:
+    mesh_refinement:
+      element_penalty:
+        min: [0.0003, 0.0001, 0.00005, 0.00003]
+---
+name: stokes_asmr_dqn
+reps_per_job: 4
+reps_in_parallel: 4
+params:
+  algorithm:
+    name: dqn
+    dqn:
+      steps_per_iteration: 20
+list:
+  recording:
+    idx: [ 1010 ]
+
+---
+name: stokes_asmr_architecture
+list:
+  recording:
+    idx: [ 1020, 1021, 1022 ]
+  algorithm:
+    network:
+      type_of_base: [ vdgn_gat, mpn, mpn ]
+      base:
+        edge_dropout: [ 0.1, 0.1, 0.0, ]
+        stack:
+          node_update_type: [ message_passing, gat,  message_passing ]
+
+---
+
+name: stokes_asmr_fixed_penalty
+params:
+  environment:
+    mesh_refinement:
+      element_penalty:
+        sample_penalty: False
+
+list:
+  recording:
+    idx: [ 1030 ]
+grid:
+  environment:
+    mesh_refinement:
+      element_penalty:
+        value: [ 0.0005, 0.00075, 0.001, 0.002, 0.003,
+                 0.005, 0.0075, 0.01, 0.02, 0.05 ]
+---
+name: stokes_asmr_adaptive_penalty
+list:
+  recording:
+    idx: [ 1031, 1032, 1033 ]
+  environment:
+    mesh_refinement:
+      element_penalty:
+        sampling_type: [ uniform, loguniform, loguniform ]
+        min: [ 0.0005, 0.00005, 0.005 ]
+        max: [ 0.05, 0.005, 0.5 ]
+
+---
+name: stokes_asmr_features
+
+list:
+  recording:
+    idx: [ 1040, 1041 ]
+  environment:
+    mesh_refinement:
+      element_features:
+        x_position: [ 1, 0 ]
+        y_position: [ 1, 0 ]
+        solution_mean: [ 1, 0 ]
+        solution_std: [ 1, 0 ]
+---
+name: stokes_asmr_npde
+list:
+  recording:
+    idx: [ 1050, 1051, 1052, 1053, 1054 ]
+  environment:
+    mesh_refinement:
+      fem:
+        num_pdes: [ 1, 10, 20, 50, 200 ]
+---
+reps_per_job: 4
+reps_in_parallel: 4
+name: stokes_asmr_global
+params:
+  algorithm:
+    mixed_return:
+      global_weight: 0.0
+list:
+  recording:
+    idx: [ 1060, 1061, 1062 ]
+  environment:
+    mesh_refinement:
+      reward_type: [ spatial_max, spatial_volume, spatial ]
+      fem:
+        error_metric: [ maximum, mean, mean ]
+      element_penalty:
+        min: [ 0.0005, 0.01, 5.0e-7 ]
+        max: [ 0.05, 0.3, 0.003 ]
+
+---
+name: stokes_asmr_reward
+params:
+  environment:
+    mesh_refinement:
+      fem:
+        error_metric: mean
+list:
+  recording:
+    idx: [ 1070, 1071, 1072 ]
+  environment:
+    mesh_refinement:
+      reward_type: [ spatial_volume, spatial, spatial ]
+      element_penalty:
+        min: [ 0.005, 1.0e-7, 1.0e-11 ]
+        max: [ 0.2, 0.003, 0.003 ]
+
+---
+#############
+# Baselines #
+#############
+name: stokes_flow_single_agent
+params:
+  algorithm:
+    ppo:
+      value_function_aggr: mean
+      normalize_mappings: 0
+    mixed_return:
+      global_weight: 0.0
+  environment:
+    mesh_refinement:
+      fem:
+        error_metric: mean
+      refinement_strategy: argmax  # refine exactly 1 element in every step as described in the argmax paper
+      element_penalty:
+        sample_penalty: False
+        value: 0.0  # no face penalty since we refine exactly 1 element in every step in any case
+      element_features:
+        element_penalty: False
+      reward_type: argmax  # reward type of the original baseline paper. No need to do area comparisons here
+
+list:
+  recording:
+    idx: [2000, 2001]
+  algorithm:
+    name: [single_agent_ppo, single_agent_dqn]
+grid:
+  environment:
+    mesh_refinement:
+      num_timesteps: [ 25, 50, 75, 100, 150,
+                       200, 250, 300, 350, 400 ]
+
+---
+reps_per_job: 4
+reps_in_parallel: 4
+name: stokes_flow_vdgn
+
+params:
+  algorithm:
+    ppo:
+      value_function_aggr: sum
+      normalize_mappings: 0
+    mixed_return:
+      global_weight: 0.0
+  environment:
+    mesh_refinement:
+      reward_type: vdgn
+      fem:
+        error_metric: mean
+      element_penalty:
+        min: 0.0003
+        max: 0.02
+
+list:
+  recording:
+    idx: [ 3000, 3001, 3002, 3010, 3011 ]
+  algorithm:
+    name: [ ppo, ppo, vdgn, ppo, ppo ]  # does sum aggr by default for vdgn
+    network:
+      type_of_base: [ mpn, vdgn_gat, mpn, mpn, mpn ]
+      training:
+        learning_rate: [ 3.0e-4, 3.0e-4, 1.0e-5, 3.0e-4, 3.0e-4 ]
+  environment:
+    mesh_refinement:
+      element_penalty:
+        max: [ 0.02, 0.02, 0.02, 0.03, 0.01 ]
+        min: [ 0.0003, 0.0003, 0.0003, 0.0005, 0.0001 ]
+
+---
+name: stokes_flow_sweep
+
+params:
+  environment:
+    environment_class: sweep_mesh_refinement
+    mesh_refinement:
+      element_penalty:
+        value: 25
+        sample_penalty: False
+      fem:
+        error_metric: mean
+      num_training_timesteps: 200 # use different episode lengths for single agent training & multi-agent evaluation
+      # here, we use 512 steps to give the agent enough time to learn the task
+      num_evaluation_timesteps: 6
+      reward_type: sweep  # use the sweep reward
+
+      element_features: # Sweep exclusive features.
+        resource_budget: True # current number of elements / maximum number of elements
+        average_error: False
+        average_solution: True
+        mean_area_neighbors: True # Agent gets mean area of neighbor elements
+        mean_edge_attributes: True # Mean
+        element_penalty: False
+  algorithm:
+    network:
+      type_of_base: sweep
+
+    name: sweep_ppo
+    mixed_return:
+      global_weight: 0.0
+    ppo:
+      value_function_aggr: mean
+      num_rollout_steps: 512
+      normalize_mappings: 0
+    dqn:
+      steps_per_iteration: 96
+      max_replay_buffer_size: 10000
+
+list:
+  recording:
+    idx: [ 4000, 4001 ]
+  algorithm:
+    name: [ sweep_ppo, sweep_dqn ]
+grid:
+  environment:
+    mesh_refinement:
+      maximum_elements: [ 150, 200, 300, 500, 750,
+                          1000, 1250, 1500, 2000, 2500
+      ]
+---
+##############
+# Heuristics #
+##############
+name: stokes_flow_no_max_elements
+# for the oracle, zz error and uniform refinement
+repetitions: 1
+reps_per_job: 1
+reps_in_parallel: 1
+iterations: 1
+params:
+  environment:
+    mesh_refinement:
+      maximum_elements: 1000000
+      fem:
+        error_metric: mean
+---
+name: stokes_flow_oracle_maxheuristic
+repetitions: 1
+reps_per_job: 1
+reps_in_parallel: 1
+iterations: 1
+
+params:
+  environment:
+    mesh_refinement:
+      maximum_elements: 1000000
+      reward_type: spatial
+      fem:
+        error_metric: maximum
+---
+
+name: reference
+params:
+  environment:
+    mesh_refinement:
+      fem:
+        error_metric: maximum
+      reward_type: spatial_max
+      element_features:
+        element_penalty: True
+      element_penalty:
+        value: null  # only used if sample_penalty is False
+        sample_penalty: True
+        sampling_type: loguniform
+        min: 0.001
+        max: 0.05
+  algorithm:
+    discount_factor: 1.0  # finite horizon discount factor
+    mixed_return:
+      global_weight: 0.5
+    ppo:
+      normalize_mappings: 1
+    network:
+      base:
+        edge_dropout: 0.0

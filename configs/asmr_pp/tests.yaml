@@ -1,0 +1,164 @@
+# mesh refinement experiments for the cluster
+
+name: "SLURM"   # MUST BE "SLURM"
+
+# Required
+partition: "dev_single"
+job-name: "tests"    # this will be the experiments name in slurm
+num_parallel_jobs: 5
+ntasks: 1
+cpus-per-task: 16
+mem-per-cpu: 8000
+time: 5  # in minutes
+
+sbatch_args: # Dictionary of SBATCH keywords and arguments
+  distribution: cyclic  # To have repetitions of the same exp be distributed to different nodes
+sh_lines: [ "export WANDB_DIR=$TMP/wandb", "mkdir $WANDB_DIR" ]
+---
+
+repetitions: 1
+reps_per_job: 1
+reps_in_parallel: 1
+iterations: 1
+
+name: "DEFAULT"   # MUST BE DEFAULT
+import_path: "asmr_default.yaml"
+
+params:
+  recording:
+    wandb:
+      task_name: "local_tests"
+      project_name: local  # name of the project
+      plot_frequency: 2
+      use_env_wandb_dir: True
+  environment:
+    environment: mesh_refinement
+    mesh_refinement:
+      # element_penalty: 5.0e-2
+      num_timesteps: 4
+      fem:
+        pde_type: laplace
+        domain:
+          num_integration_refinements: 4
+          domain_type: square_hole
+          mean_hole_size: 0.15
+          maximum_size_distortion: 0.1
+          maximum_position_distortion: 0.3  # also doubles for the l-shape
+      evaluation:
+        fem:
+          num_pdes: [ 1, 0 ]
+          domain:
+            fixed_domain: [ True, False ]
+            maximum_position_distortion: [ 0.0, 0.3 ]
+  algorithm:
+    dqn:
+      steps_per_iteration: 32
+      initial_replay_buffer_samples: 100
+
+---
+name: laplace_asmr_test
+list:
+  recording:
+    nametag: [ "asmr_test" ]
+  algorithm:
+    ppo:
+      value_function_aggr: [ spatial ]
+    mixed_return:
+      global_weight: [ 0.5 ]
+
+---
+name: laplace_single_agent_test
+params:
+  algorithm:
+    ppo:
+      value_function_aggr: mean
+  environment:
+    mesh_refinement:
+      refinement_strategy: single_agent  # refine exactly 1 element in every step as described in the single_agent paper
+      element_penalty:
+        value: 0.0  # no face penalty since we refine exactly 1 element in every step in any case
+      reward_type: single_agent  # reward type of the original baseline paper. No need to do area comparisons here
+      num_timesteps: 100  # give enough steps to make a nice refinement
+
+list:
+  recording:
+    nametag: [ "single_agent_ppo_test" ]
+  algorithm:
+    name: [ single_agent_ppo ]
+
+---
+name: laplace_vdgn_test
+params:
+  environment:
+    mesh_refinement:
+      reward_type: vdgn
+  algorithm:
+    name: vdgn_ppo
+    ppo:
+      value_function_aggr: sum
+
+list:
+  recording:
+    nametag: [ "vdgn_ppo_test" ]
+
+---
+name: laplace_sweep_test
+
+params:
+  environment:
+    environment_class: sweep_mesh_refinement
+    mesh_refinement:
+      num_timesteps: 4
+      element_penalty:
+        value: 25
+      num_training_timesteps: 200 # use different episode lengths for single agent training & multi-agent evaluation
+      # here, we use 512 steps to give the agent enough time to learn the task
+      num_evaluation_timesteps: 4
+      reward_type: sweep  # use the sweep reward
+
+      element_features: # Sweep exclusive features.
+        resource_budget: True # current number of elements / maximum number of elements
+        average_error: False
+        average_solution: True
+        mean_area_neighbors: True # Agent gets mean area of neighbor elements
+        mean_edge_attributes: True # Mean
+  algorithm:
+    network:
+      type_of_base: sweep
+
+    name: sweep_ppo
+    ppo:
+      value_function_aggr: mean
+      num_rollout_steps: 512
+
+list:
+  recording:
+    nametag: [ "sweep_ppo_test" ]
+  algorithm:
+    name: [ sweep_ppo ]
+---
+name: poisson_asmr_test
+params:
+  algorithm:
+    ppo:
+      projection_type: mean
+  environment:
+    mesh_refinement:
+      # element_penalty: 5.0e-2
+      fem:
+        pde_type: poisson
+        domain:
+          num_integration_refinements: 4
+      # element_penalty: 5.0e-2
+      num_timesteps: 4
+---
+name: stokes_flow_asmr_test
+params:
+  environment:
+    mesh_refinement:
+      # element_penalty: 5.0e-2
+      num_timesteps: 4
+      fem:
+        pde_type: stokes_flow
+        domain:
+          domain_type: trapezoid_hole

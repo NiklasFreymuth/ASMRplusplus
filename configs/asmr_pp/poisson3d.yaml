@@ -1,0 +1,245 @@
+name: "SLURM"   # MUST BE "SLURM"
+
+# Required
+partition: "multiple_il"
+job-name: "poisson3d"    # this will be the experiments name in slurm
+num_parallel_jobs: 99
+time: 4300  # in minutes
+cpus-per-task: 64
+ntasks: 2
+mem-per-cpu: 1000
+
+sbatch_args: # Dictionary of SBATCH keywords and arguments
+  distribution: cyclic  # To have repetitions of the same exp be distributed to different nodes
+  nodes: 2
+
+slurm_log: "./slurmlog"     # optional. dir in which slurm output and error logs will be saved.
+sh_lines: [ "export WANDB_DIR=$TMPDIR/wandb", "mkdir $WANDB_DIR" ]
+---
+
+iterations: 201
+name: "DEFAULT"   # MUST BE DEFAULT
+import_path: "asmr_default.yaml"
+params:
+  environment:
+    environment: mesh_refinement
+
+    mesh_refinement:
+      num_timesteps: 7
+      element_penalty:
+        value: 1.0e-5
+        min: 1.0e-3
+        max: 1.0e-2
+      maximum_elements: 50000
+      fem:
+        pde_type: poisson
+        domain:
+          initial_meshing_method: custom
+          dimension: 3  # 3d domain!
+          domain_type: cuboid
+          boundary: [ 0.5, 1.0, 0.1 ]  # "wide rectangle"
+          fixed_domain: True
+          num_integration_refinements: 3
+          max_initial_element_volume: 1.0
+        poisson:
+          gmm_sample_mode: random  # random, stratified or gaussian
+
+          fixed_load: False # True
+          # gmm parameters
+          density_mode: density  # either "density" or "log_density"
+          num_components: 3  # number of GMM components
+          mean_position_range: 0.4  # maximum deviation range of the gmm mean from (0.5, 0.5)
+          lower_covariance_bound: 0.0001  # minimum value of the isotropic covariance matrix
+          upper_covariance_bound: 0.001  # maximum value of the isotropic covariance matrix
+          # shifted load parameters
+          element_features:
+            load_function: True
+
+      evaluation:
+        fem:
+          num_pdes: [ 1, 0 ]
+          poisson:
+            fixed_load: [ True, False ]
+
+
+---
+name: poisson3d_asmr
+
+list1:
+  recording:
+    idx: [ 1000 ]
+list2:
+  environment:
+    mesh_refinement:
+      element_penalty:
+        max: [ 0.1 ]
+        min: [ 0.0001 ]
+
+---
+name: poisson3d_asmr_old
+
+params:
+  environment:
+    environment: mesh_refinement
+    mesh_refinement:
+      element_penalty:
+        sample_penalty: False
+      reward_type: spatial_volume
+      fem:
+        error_metric: mean
+      element_features:
+        element_penalty: False
+  algorithm:
+    discount_factor: 0.99
+    ppo:
+      normalize_mappings: 0
+    network:
+      base:
+        edge_dropout: 0.0
+list1:
+  recording:
+    idx: [ 1001 ]
+list2:
+  environment:
+    mesh_refinement:
+      element_penalty:
+        value: [ 20.0, 10.0,
+                 5.0, 3.0, 2.0, 1.0,
+                 0.5, 0.3, 0.2, 0.1
+        ]
+---
+
+name: poisson3d_single_agent
+params:
+  algorithm:
+    name: single_agent_ppo
+    ppo:
+      value_function_aggr: mean
+      normalize_mappings: 0
+    mixed_return:
+      global_weight: 0.0
+  environment:
+    mesh_refinement:
+      fem:
+        error_metric: mean
+      refinement_strategy: argmax  # refine exactly 1 element in every step as described in the argmax paper
+      element_penalty:
+        sample_penalty: False
+        value: 0.0  # no face penalty since we refine exactly 1 element in every step in any case
+      element_features:
+        element_penalty: False
+      reward_type: argmax  # reward type of the original baseline paper. No need to do area comparisons here
+
+list1:
+  recording:
+    idx: [ 2000 ]
+list2:
+  environment:
+    mesh_refinement:
+      num_timesteps: [ 25, 50, 75, 100, 150,
+                       200, 250, 300, 350, 400
+      ]
+
+---
+name: poisson3d_vdgn
+
+params:
+  algorithm:
+    name: ppo
+    network:
+      type_of_base: mpn
+      training:
+        learning_rate: 3.0e-4
+    ppo:
+      value_function_aggr: sum
+      normalize_mappings: 0
+    mixed_return:
+      global_weight: 0.0
+  environment:
+    mesh_refinement:
+      reward_type: vdgn
+      fem:
+        error_metric: mean
+      element_penalty:
+        min: 1.0e-5
+        max: 1.0e-1
+list1:
+  recording:
+    idx: [ 3000 ]
+
+---
+name: poisson3d_sweep
+
+params:
+  environment:
+    environment_class: sweep_mesh_refinement
+    mesh_refinement:
+      element_penalty:
+        value: 25
+        sample_penalty: False
+      fem:
+        error_metric: mean
+      num_training_timesteps: 200 # use different episode lengths for single agent training & multi-agent evaluation
+      # here, we use 512 steps to give the agent enough time to learn the task
+      num_timesteps: 6
+      num_evaluation_timesteps: 6
+      reward_type: sweep  # use the sweep reward
+
+      element_features: # Sweep exclusive features.
+        resource_budget: True # current number of elements / maximum number of elements
+        average_error: False
+        average_solution: True
+        mean_area_neighbors: True # Agent gets mean area of neighbor elements
+        mean_edge_attributes: True # Mean
+        element_penalty: False
+  algorithm:
+    name: sweep_ppo
+    network:
+      type_of_base: sweep
+
+    mixed_return:
+      global_weight: 0.0
+    ppo:
+      value_function_aggr: mean
+      num_rollout_steps: 512
+      normalize_mappings: 0
+
+list1:
+  recording:
+    idx: [ 4000 ]
+list2:
+  environment:
+    mesh_refinement:
+      maximum_elements: [ 500, 750, 1000, 1250, 1500,
+                          2000, 2500, 3000, 4000, 5000 ]
+
+---
+##############
+# Heuristics #
+##############
+name: poisson3d_no_max_elements
+# for the oracle, zz error and uniform refinement
+repetitions: 1
+reps_per_job: 1
+reps_in_parallel: 1
+iterations: 1
+params:
+  environment:
+    mesh_refinement:
+      maximum_elements: 1000000
+      reward_type: spatial
+      fem:
+        error_metric: mean
+---
+name: poisson3d_oracle_maxheuristic
+repetitions: 1
+reps_per_job: 1
+reps_in_parallel: 1
+iterations: 1
+
+params:
+  environment:
+    mesh_refinement:
+      maximum_elements: 1000000
+      fem:
+        error_metric: maximum

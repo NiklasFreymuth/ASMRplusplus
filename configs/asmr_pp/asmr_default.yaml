@@ -1,0 +1,277 @@
+# Horeka
+name: "SLURM"   # MUST BE "SLURM"
+
+# Required
+partition: "cpuonly"
+job-name: "GNNs"    # this will be the experiment name in slurm
+num_parallel_jobs: 0
+time: 3000 # in minutes
+cpus-per-task: 76
+ntasks: 1
+
+sbatch_args: # Dictionary of SBATCH keywords and arguments
+  distribution: block  # To have repetitions of the same exp be distributed to different nodes
+  nodes: 1
+slurm_log: "./slurmlog"     # optional. dir in which slurm output and error logs will be saved.
+sh_lines: [ "export WANDB_DIR=$TMPDIR/wandb", "mkdir $WANDB_DIR" ]
+---
+repetitions: 10
+reps_per_job: 8
+reps_in_parallel: 8
+iterations: 401
+
+name: "DEFAULT"   # MUST BE DEFAULT
+import_path: "../default.yaml"
+params:
+  recording:
+    wandb:
+      enabled: True  # whether to use the wandb logger or not
+      plot_frequency: 200  # If wandb is enabled, how often to log plots online. High frequencies take up a lot of space.
+      plot_first_iteration: False  # whether to plot the first iteration or not. This is useful if you want to
+      # reduce the number of plots that are logged to wandb
+      project_name: ASMR  # name of the project
+      task_name: default
+      tags: [ "asmr_pp" ]  # list of custom tags to sort/find these runs by
+      use_env_wandb_dir: True  # whether to use the os environment's wandb directory or the default one.
+      # If True and such an environment variable is not set, the default directory will be used
+    checkpoint_frequency: 100
+  environment:
+    environment: mesh_refinement
+    mesh_refinement:
+      manual_normalization: False
+      num_timesteps: 6
+      element_penalty:
+        sample_penalty: True
+        value: 1.0e-2
+        sampling_type: loguniform
+        min: 1.0e-3
+        max: 1.0e-1
+      element_limit_penalty: 1000
+      maximum_elements: 20000
+
+      refinement_strategy: absolute_discrete
+      reward_type: spatial_max
+      half_half_reward: False
+
+      fem:
+        error_metric: maximum
+        scale_integration_by_volume: True
+        num_pdes: 100
+        domain:
+          dimension: 2  # either 2 or 3. 3d is only supported for "poisson" at the moment.
+          initial_meshing_method: meshpy
+          num_integration_refinements: 6
+          fixed_domain: False
+          max_initial_element_volume: 0.05
+
+          # rest is pde-specific
+          domain_type: symmetric
+
+          # convex polygon parameters
+          num_boundary_nodes: 10
+          maximum_distortion: 0.2
+
+          # symmetric hole parameters
+          mean_hole_size: 0.15
+          maximum_size_distortion: 0.1
+          maximum_position_distortion: 0.3  # also doubles for the l-shape
+        pde_type: poisson  # either poisson, laplace, stokes_flow, linear_elasticity or heat_diffusion
+        poisson:
+          # generalizing poisson parameters
+          boundary_type: "zero"
+          # "zero" for zero dirichlet boundary conditions,
+          # "general" for randomized dirichlet inlets, and
+          # "neumann" for random neumann boundary conditions
+          boundary_inlet_rate: 0.95  # the rate of the boundary that is used as an inlet
+          corner_inlet_rate: 0.8  # the rate of the corner that is used as an inlet
+          lower_random_scale: -1
+          gmm_sample_mode: random  # random, stratified or gaussian
+          gmm_noise_scale: 0.2 # scale of the noise used to determine the positions of the means of the GMM components
+          # iff gmm_sample_mode is gaussian
+
+          fixed_load: False
+
+          # gmm parameters
+          density_mode: density  # either "density" or "log_density"
+          num_components: 3  # number of GMM components
+          mean_position_range: 0.4  # maximum deviation range of the gmm mean from (0.5, 0.5)
+          lower_covariance_bound: 0.0001  # minimum value of the isotropic covariance matrix
+          upper_covariance_bound: 0.001  # maximum value of the isotropic covariance matrix
+          # shifted load parameters
+          element_features:
+            load_function: True
+            distance_to_neumann: False  # only for neumann boundary condition task
+            distance_to_dirichlet: False  # only for neumann boundary condition task
+        laplace:
+          element_features:
+            distance_to_source: True  # whether to include the closest distance of the face midpoints to the source
+        stokes_flow:
+          fixed_inlet: False  # whether to re-draw a new velocity with every reset() or use the same velocity
+          # during training
+
+          inlet_type: parabolic  # either "parabolic" or "gaussian". Kind of inlet profile to use
+          # parameters for the parabolic inlet profile
+          lower_velocity: 1.0  # lower bound for the velocity. Will be sampled from U[lower_velocity, upper_velocity]
+          upper_velocity: 5.0  # upper bound for the velocity
+
+          # parameters for the gaussian inlet profile
+          mean_range: 0.4  # maximum deviation range of the mean from (0.5, 0.5)
+          lower_std: 0.05  # lower bound for the standard deviation. Sampled from exp(U[log(lower_std), log(upper_std)])
+          upper_std: 0.5  # upper bound for the standard deviation
+          element_features:
+            distance_to_inlet: False  # whether to include the distance to the velocity inlet as a feature
+            velocity: 0  # whether to include the velocity applied to the left boundary in the observation graph
+        linear_elasticity: # parameters to specify the linear elasticity model, which models a deformable plate and the stress that this deformation causes
+          fixed_displacement: False  # whether to re-draw a new displacement with every reset()
+          # or use the same load during training
+
+          # The following parameters are used to specify a family of displacement applied to the right boundary of
+          # whatever geometry/domain is used for the linear elasticity task
+          # the displacement magnitude is sampled uniformly as
+          # r in [lower_displacement_magnitude, upper_displacement_magnitude] and then added to a random angle
+          # in [0, 2pi].
+          # if fixed_displacement is True, the displacement will have mean magnitude and an angle of 1/4 pi, i.e.,
+          # point upwards in a 45° angle.
+          lower_displacement_magnitude: 0.2
+          upper_displacement_magnitude: 0.8
+
+          relative_stress_weight: 0.5  # weight of the stress in the solution vector relative to that of the displacement.
+          # in [0,1]. A value of 0 means that the stress is not included in the solution vector.
+          # A value of 1 means that the stress is the only component of the solution vector.
+
+
+          # we additionally allow features that are specific to the used pde type to be included in the observations.
+          # For the linear elasticity equation, we can include the applied x and y displacement as a feature.
+          element_features:
+            x_displacement: True  # whether to include the x displacement applied to the right end of the mesh
+            # in the observation graph
+            y_displacement: True  # whether to include the y displacement applied to the right end of the mesh
+            # in the observation graph
+        heat_diffusion:
+          lower_diffusivity: 0.001
+          upper_diffusivity: 0.001
+          fixed_diffusion: False
+          last_step_only: True  # whether to only reward the solution quality of the last time step in the
+          # observation graph (True) or weight all time steps equally (False)
+          element_features:
+            distance_to_start: True
+            distance_to_end: True
+      element_features:
+        x_position: False
+        y_position: False
+        error: False
+        volume: True
+        solution_mean: True
+        solution_std: True
+        solution_min: False
+        solution_max: False
+        solution_median: False
+        timestep: True
+        element_penalty: True
+        num_elements: False
+      edge_features:
+        distance_vector: False
+        euclidean_distance: True
+  #
+  #      evaluation:  # copies the environment and overwrites values that are different
+  #        fem:
+  #         domain:
+  #           fixed_domain: True
+  #         poisson:
+  #           fixed_load: True
+  algorithm:
+    mixed_return:
+      global_weight: 0.5  # maximum value of the global weight, between 0 and 1.
+      # If 0, no mixed_return learning is used
+    name: ppo
+    verbose: True
+    batch_size: 32  # number of samples to process per step
+    discount_factor: 1.0  # finite horizon discount factor
+    bootstrap_truncated_dones: False  # When sampling from the environment, only count "dones" that are not due to
+    # timeouts of the environment
+    use_gpu: False
+    sample_buffer_on_gpu: False  # iff use_gpu, decide whether the sample buffer should be on the gpu or not
+    ppo:
+      normalize_mappings: 1  # whether to normalize the mass of the agent mappings. Only does something for ASMR
+      num_rollout_steps: 256
+      normalize_observations: True  # whether to independently normalize node and edge features
+      normalize_rewards: False  # Whether to normalize the environment rewards according to the PPO scheme
+      epochs_per_iteration: 5
+      value_function_aggr: spatial  # Scope of the value function.
+      # Either "agent" for a value function for each node/agent (currently only works for constant numbers of agents)
+      # "spatial" for value function and reward for each node/agent (for variable agents if the env supports it),
+      # "mean" for a single value for the full graph
+      # "sum" for a linear value decomposition of a graph-wise reward. Like graph, but with a sum instead of a mean
+
+      projection_type: "sum"  # "projection type" for the value function. Either "mean" or "sum"
+      clip_range: 0.2
+      gae_lambda: 0.95
+      max_grad_norm: 0.5
+      entropy_coefficient: 0.0
+      value_function_coefficient: 0.5
+      value_function_clip_range: 0.2
+      orthogonal_initialization: False  # Whether to initialize the policy and value heads with orthogonal values
+      initial_log_std: 0.0  # Initial value for the log standard deviation of the policy distribution
+    dqn:
+      normalize_mappings: 1  # whether to normalize the mass of the agent mappings
+      normalize_observations: False  # whether to independently normalize node and edge features
+      steps_per_iteration: 24
+      initial_replay_buffer_samples: 500
+      initial_sampling_strategy: random
+      num_gradient_steps: 1
+      target_update_rate: 0.99
+      projection_type: "mean"
+      num_exploration_decay_steps: null  # defaults to iteration/2
+      double_q_learning: True
+      dueling: True
+      exploration_method: boltzmann
+      exploration_rate_init: 1
+      exploration_rate_final: 0.01
+      max_replay_buffer_size: 5000
+      use_prioritized_buffer: True
+      prioritized_buffer:
+        alpha: 0.6
+        beta_init: 0.4
+        beta_final: 1.0
+    network:
+      latent_dimension: 64
+      share_base: False
+      type_of_base: mpn  # which general backbone to use. MPN forwards to HMPN package/repo
+      base:
+        architecture: mpn  # either mpn or gat. GAT is only available for homogeneous graphs and currently does not
+        # support all features of MPN
+        scatter_reduce: mean
+        create_graph_copy: True  # whether to create a copy of the used graph before the forward pass or not
+        assert_graph_shapes: False  # whether to assert correct shapes for the graph before each forward pass or not
+        edge_dropout: 0.1  # dropout rate for the edges of the graph. Will remove the edge from the graph
+        # with the given probability during training only
+        stack:  # used for mpn
+          layer_norm: inner   # which kind of layer normalization to use. null/None for no layer norm,
+        # "outer" for layer norm around each full message passing step, "inner" for layer norm after each message
+          num_steps: 2
+          num_step_repeats: 1  # how often to repeat the message passing step
+          residual_connections: inner
+          node_update_type: message_passing  # either "message_passing" or "gat"
+          attention_heads: 2  # number of attention heads for the gat
+          mlp:
+            activation_function: leakyrelu
+            num_layers: 2
+            add_output_layer: False
+            regularization:
+              dropout: 0
+              spectral_norm: False
+              latent_normalization: null
+      actor:
+        mlp:
+          activation_function: tanh
+          num_layers: 2
+      critic:
+        mlp:
+          activation_function: tanh
+          num_layers: 2
+      training:
+        learning_rate: 3.0e-4
+        l2_norm: 0
+        optimizer: adam
+        lr_scheduling_rate: 1  # Rate for an exponential learning rate annealing after every outer *iteration*.
+        # None or 1 for no scheduling. A value of 0.99 corresponds to a 1% decrease in LR every iteration.
